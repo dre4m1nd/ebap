@@ -1,0 +1,78 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: DemoSystem
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/dorm_electric_fee?useUnicode=true&characterEncoding=utf-8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&zeroDateTimeBehavior=convertToNull&allowMultiQueries=true
+    username: root
+    password: 123456
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+    # 生产者配置：消息持久化（必开，避免MQ宕机消息丢失）
+    publisher-confirm-type: correlated # 开启生产者确认，确保消息发送到MQ
+    publisher-returns: true # 开启消息返回，处理路由失败的消息
+    template:
+      mandatory: true # 强制要求消息路由成功，否则触发返回回调
+      # 消费者配置：自动重试（核心，消费失败自动重试）
+    listener:
+      simple:
+        acknowledge-mode: auto # 自动确认消息（消费成功则ACK，失败则NACK并重试）
+        retry:
+          enabled: true # 开启自动重试
+          max-attempts: 3 # 最大重试次数（建议3次，避免无限重试）
+          initial-interval: 1000 # 首次重试间隔（1秒）
+          multiplier: 2 # 重试间隔倍数（第2次2秒，第3次4秒）
+        concurrency: 3 # 消费者核心线程数（根据业务调整，3-5即可）
+        max-concurrency: 5 # 消费者最大线程数
+  mail:
+    host: smtp.163.com        # SMTP服务器地址（QQ：smtp.qq.com；163：smtp.163.com）
+    port: 465                # SSL端口（QQ/163均推荐465，25端口易被屏蔽）
+    username: autoNoticer@163.com  # 发件人邮箱（你的QQ/163邮箱）
+    password: BSfwqAVR7cw9nbFV # SMTP授权码（获取方式见下方提示）
+    protocol: smtps          # 启用SSL加密（固定值，465端口必配）
+    default-encoding: UTF-8  # 编码（防止邮件内容乱码）
+    properties:
+      mail:
+        smtp:
+          ssl:
+            enable: true     # 开启SSL（必须）
+          auth: true         # 开启身份验证（必须）
+        debug: false         # 生产环境关闭调试，开发环境可设为true（查看邮件发送日志）
+    # 2. Thymeleaf 模板配置（默认配置即可，无需修改，确保模板路径正确）
+  thymeleaf:
+    prefix: classpath:/static/templates/  # 模板文件根目录（固定，不可改）
+    suffix: .html                  # 模板后缀（固定）
+    mode: HTML                     # 模板模式
+    encoding: UTF-8                # 模板编码
+    cache: false                   # 开发环境关闭缓存（修改模板无需重启项目）
+
+
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
+  api-docs:
+    enabled: true
+    path: /v3/api-docs
+  group-configs:
+    - group: "default"
+      paths-to-match: "/**"
+      packages-to-scan: com.dre4m1nd.ebap.controller
+knife4j:
+  enable: true
+  setting:
+    language: zh_CN
+

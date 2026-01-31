@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>宿舍电费提醒</title>
+    <!-- 内联CSS，保证邮件客户端兼容性（避免外部CSS失效） -->
+    <style>
+        * {margin: 0; padding: 0; box-sizing: border-box;}
+        .email-container {width: 90%; max-width: 600px; margin: 20px auto; border: 1px solid #eee; border-radius: 8px; overflow: hidden;}
+        .email-header {background-color: #2f54eb; color: #fff; padding: 16px; font-size: 18px; font-weight: bold;}
+        .email-content {padding: 24px; line-height: 2; font-size: 14px; color: #333;}
+        .email-content .info {margin: 12px 0;}
+        .email-content .warn {color: #e64340; font-weight: bold;}
+        .email-footer {padding: 12px; background-color: #f5f7fa; color: #666; font-size: 12px; text-align: center;}
+    </style>
+</head>
+<body>
+<div class="email-container">
+    <!-- 邮件头部 -->
+    <div class="email-header">【宿舍电费提醒】余额不足，请及时充值</div>
+    <!-- 邮件内容：动态渲染业务数据 -->
+    <div class="email-content">
+        <p><span th:text="${nickName}"></span> 同学：</p>
+        <p>你所居住的<span class="warn" th:text="${dormNo}"></span>宿舍，当前<span class="info" th:text="${meterType == 1 ? '照明' : '空调'}"></span>电费余额不足，具体信息如下：</p>
+        <p class="info">剩余电量：<span class="warn" th:text="${leftEle}"></span> 度</p>
+        <p class="info">剩余金额：<span class="warn" th:text="${leftMoney}"></span> 元</p>
+        <p>请及时通过学校指定渠道充值，避免因欠费停电影响正常生活~</p>
+        <p>查询时间：<span th:text="${queryTime}"></span></p>
+    </div>
+    <!-- 邮件底部 -->
+    <div class="email-footer">本邮件由宿舍电费管理系统自动发送，请勿回复</div>
+</div>
+</body>
+</html>
