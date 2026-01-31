@@ -116,13 +116,6 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-thymeleaf</artifactId>
         </dependency>
-        <!-- 解决CBORFactory类缺失问题，Spring Boot项目推荐使用此配置 -->
-        <dependency>
-            <groupId>com.fasterxml.jackson.dataformat</groupId>
-            <artifactId>jackson-dataformat-cbor</artifactId>
-            <!-- 版本可省略，由Spring Boot父工程统一管理 -->
-            <!-- <version>2.17.2</version> -->
-        </dependency>
     </dependencies>
 
     <build>

@@ -3,7 +3,9 @@ package com.dre4m1nd.ebap.common.util;
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
 import lombok.AllArgsConstructor;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Component;
@@ -19,19 +21,21 @@ import java.util.Map;
  */
 @Component
 @Slf4j
-@AllArgsConstructor
+@RequiredArgsConstructor
 public class EmailTemplateUtil {
 
-    private JavaMailSender javaMailSender;
-    private TemplateEngine templateEngine;
+    private final JavaMailSender javaMailSender;
+    private final TemplateEngine templateEngine;
 
+    @Value("${spring.mail.username}")
+    private String fromEmail;
     private final static String TEMPLATE_NAME = "notice_mail";
 
     public void sendEmail(String toEmail, Map<String, Object> params) throws MessagingException {
         MimeMessage mimeMessage = javaMailSender.createMimeMessage();
         MimeMessageHelper helper = new MimeMessageHelper(mimeMessage, true, "UTF-8");
 
-        helper.setFrom("ebap@dre4m1nd.com");
+        helper.setFrom(fromEmail);
         helper.setTo(toEmail);
         helper.setSubject("电费提醒");
 

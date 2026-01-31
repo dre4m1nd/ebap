@@ -11,7 +11,6 @@ import com.dre4m1nd.ebap.pojo.entity.DormStudent;
 import com.dre4m1nd.ebap.service.IDormElectricLogService;
 import com.dre4m1nd.ebap.service.IDormEmailLogService;
 import com.dre4m1nd.ebap.service.IDormStudentService;
-import jakarta.mail.MessagingException;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -20,6 +19,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -32,117 +32,105 @@ import java.util.Map;
 @AllArgsConstructor
 public class RabbitMQListener {
 
-    private EmailTemplateUtil emailTemplateUtil;
-    private WebClient webClient;
-    private RabbitTemplate rabbitTemplate;
-    private IDormStudentService dormStudentService;
-    private IDormElectricLogService dormElectricLogService;
-    private IDormEmailLogService dormEmailLogService;
+    private final EmailTemplateUtil emailTemplateUtil;
+    private final WebClient webClient;
+    private final RabbitTemplate rabbitTemplate;
+    private final IDormStudentService dormStudentService;
+    private final IDormElectricLogService dormElectricLogService;
+    private final IDormEmailLogService dormEmailLogService;
 
-    public static final Integer TYPE_LIGHT = 1;
-    public static final Integer TYPE_AIR = 2;
+    // 建议：使用枚举或常量类
+    public static final int TYPE_LIGHT = 1;
+    public static final int TYPE_AIR = 2;
 
     @RabbitListener(queues = RabbitMQConfig.ELECTRIC_QUERY_QUEUE)
     public void queryListener(DormInfo dormInfo) {
-        DormElectricLog lightElectricLog = query(dormInfo, TYPE_LIGHT);
-        dormElectricLogService.save(lightElectricLog);
-        DormElectricLog airElectricLog = query(dormInfo, TYPE_AIR);
-        dormElectricLogService.save(airElectricLog);
-        if (isArrearage(lightElectricLog, dormInfo, TYPE_LIGHT)) {
-            rabbitTemplate.convertAndSend(
-                    RabbitMQConfig.ELECTRIC_NOTICE_QUEUE,
-                    lightElectricLog);
+        // 分别查询照明和空调
+        processQuery(dormInfo, TYPE_LIGHT);
+        processQuery(dormInfo, TYPE_AIR);
+    }
+
+    private void processQuery(DormInfo dormInfo, int type) {
+        try {
+            // 获取数据（block 是因为 RabbitListener 是同步的，但在 Mono 链内部处理逻辑）
+            ElectricApiResponse response = fetchElectricData(dormInfo, type).block();
+
+            if (response != null && response.getResultObject() != null) {
+                DormElectricLog logEntity = toDormElectricLog(response, dormInfo, type);
+                dormElectricLogService.save(logEntity);
+
+                if (isArrearage(logEntity, dormInfo, type)) {
+                    rabbitTemplate.convertAndSend(RabbitMQConfig.ELECTRIC_NOTICE_QUEUE, logEntity);
+                }
+            }
+        } catch (Exception e) {
+            log.error("处理宿管查询失败: dormId={}, type={}, error={}", dormInfo.getId(), type, e.getMessage());
         }
-        if (isArrearage(airElectricLog, dormInfo, TYPE_AIR)) {
-            rabbitTemplate.convertAndSend(
-                    RabbitMQConfig.ELECTRIC_NOTICE_QUEUE,
-                    airElectricLog);
-        }
+    }
+
+    private Mono<ElectricApiResponse> fetchElectricData(DormInfo dormInfo, int type) {
+        return webClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .pathSegment("getEleInfo")
+                        .queryParam("openId", dormInfo.getOpenId())
+                        .queryParam("type", type)
+                        .build())
+                .retrieve()
+                .onStatus(status -> !status.is2xxSuccessful(), clientResponse ->
+                        clientResponse.bodyToMono(String.class)
+                                .flatMap(body -> Mono.error(new RuntimeException("接口响应错误: " + body)))
+                )
+                .bodyToMono(ElectricApiResponse.class)
+                .timeout(Duration.ofSeconds(12))
+                .onErrorResume(e -> {
+                    log.error("请求电费接口异常: {}", e.getMessage());
+                    return Mono.empty();
+                });
     }
 
     @RabbitListener(queues = RabbitMQConfig.ELECTRIC_NOTICE_QUEUE)
     public void noticeListener(DormElectricLog dormElectricLog) {
         List<DormStudent> students = dormStudentService.getByDormId(dormElectricLog.getDormId());
-        students.forEach(dormStudent -> {
+        for (DormStudent student : students) {
             try {
-                emailTemplateUtil.sendEmail(dormStudent.getEmail(), toEmailParams(dormElectricLog, dormStudent));
-                dormEmailLogService.save(toDormEmailLog(dormElectricLog, dormStudent));
-            } catch (MessagingException e) {
-                log.error("发送邮件失败：{}", e.getMessage());
-                throw new RuntimeException(e);
+                emailTemplateUtil.sendEmail(student.getEmail(), toEmailParams(dormElectricLog, student));
+                dormEmailLogService.save(toDormEmailLog(dormElectricLog, student));
+                log.info("通知成功: 宿舍={} -> 学生={}", dormElectricLog.getDormId(), student.getNickName());
+            } catch (Exception e) {
+                log.error("邮件发送失败: {}", e.getMessage());
             }
-        });
-        log.info("发送邮件成功");
-    }
-
-
-
-    private boolean isArrearage(DormElectricLog dormElectricLog, DormInfo dormInfo, Integer type) {
-        return switch (type) {
-            case 1 -> dormElectricLog.getLeftMoney() < dormInfo.getLimitLight();
-            case 2 -> dormElectricLog.getLeftEle() < dormInfo.getLimitAir();
-            default -> false;
-        };
-    }
-    
-
-    private DormElectricLog query(DormInfo dormInfo, Integer type) {
-        ElectricApiRequest apiRequest = toApiRequest(dormInfo, type);
-        ElectricApiResponse response = get(apiRequest);
-        return toDormElectricLog(response, dormInfo, type);
-    }
-
-
-    private ElectricApiResponse get(ElectricApiRequest request) {
-        // 前置校验：请求参数非空，避免拼接null参数导致接口异常
-        if (request == null || request.getOpenId() == null || request.getType() == null) {
-            log.error("调用电费接口失败：请求参数为空！request={}", request);
-            throw new RuntimeException("调用电费接口失败：请求参数不能为空");
         }
+    }
 
+    private boolean isArrearage(DormElectricLog log, DormInfo info, int type) {
+        if (type == TYPE_LIGHT) {
+            return log.getLeftMoney() < info.getLimitLight();
+        }
+        if (type == TYPE_AIR) {
+            return log.getLeftEle() < info.getLimitAir();
+        }
+        return false;
+    }
+
+    private DormElectricLog toDormElectricLog(ElectricApiResponse response, DormInfo dormInfo, int type) {
+        var obj = response.getResultObject();
+        return new DormElectricLog()
+                .setDormId(dormInfo.getId())
+                .setMeterType(type)
+                // 增加防御性解析，防止接口返回非数字字符串
+                .setLeftMoney(safeParseFloat(obj.getLeftMoney()))
+                .setLeftEle(safeParseFloat(obj.getLeftEle()))
+                .setQueryTime(obj.getMonTime());
+    }
+
+    private float safeParseFloat(String value) {
         try {
-            ElectricApiResponse response = webClient.get()
-                    // 优化：使用pathSegment替代path，自动处理/拼接，避免//问题
-                    .uri(uriBuilder -> uriBuilder
-                            .pathSegment("getEleInfo") // 无需带/，自动和baseUrl拼接为 基础地址/getEleInfo
-                            .queryParam("openId", request.getOpenId())
-                            .queryParam("type", request.getType())
-                            .build())
-                    .retrieve()
-                    // 优化1：异常日志添加【请求参数】，便于排查；用bodyToMono(String.class)获取真实响应体
-                    .onStatus(status -> !status.is2xxSuccessful(), clientResponse ->
-                            clientResponse.bodyToMono(String.class)
-                                    .flatMap(responseBody -> {
-                                        log.error("调用电费接口失败，状态码：{}，请求参数：{}，响应体：{}",
-                                                clientResponse.statusCode(), request, responseBody);
-                                        return Mono.error(new RuntimeException(
-                                                "GET调用校园电费接口失败，状态码：" + clientResponse.statusCode()));
-                                    })
-                    )
-                    // 解析响应体（此时已配置日期规则，可正常解析LocalDateTime）
-                    .bodyToMono(ElectricApiResponse.class)
-                    .block();
-
-            // 核心优化2：添加非空校验，避免返回null导致上层空指针
-            if (response == null) {
-                log.error("调用电费接口成功，但响应体解析为null！请求参数：{}", request);
-                throw new RuntimeException("调用电费接口成功，未获取到有效响应数据");
-            }
-
-            // 可选优化：校验核心字段，增强鲁棒性
-            if (response.getResultObject() == null) {
-                log.warn("调用电费接口返回结果无数据！请求参数：{}，响应：{}", request, response);
-                // 可根据业务选择：抛异常/返回原对象
-                // throw new RuntimeException("调用电费接口返回结果为空");
-            }
-
-            return response;
-        } catch (Exception e) {
-            // 优化3：异常日志添加【请求参数】，定位问题更高效
-            log.error("调用电费接口异常，请求参数：{}", request, e);
-            throw new RuntimeException("调用电费接口异常：" + e.getMessage());
+            return value == null ? 0.0f : Float.parseFloat(value);
+        } catch (NumberFormatException e) {
+            return 0.0f;
         }
     }
+
 
     private DormEmailLog toDormEmailLog(DormElectricLog dormElectricLog, DormStudent dormStudent) {
         return new DormEmailLog()
