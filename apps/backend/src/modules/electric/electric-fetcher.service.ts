@@ -25,21 +25,21 @@ export class ElectricFetcherService {
     meterType: MeterType,
   ): Promise<ElectricLog | null> {
     const config = apiConfig();
-    const path =
-      meterType === MeterType.AIR ? config.airPath : config.lightPath;
-    const url = `${config.baseUrl}${path}`.replace('{openId}', dorm.openId);
+    const url = `${config.baseUrl}?openId=${dorm.openId}&type=${meterType}`;
 
     try {
       const { data } = await firstValueFrom(
         this.httpService.get(url, { timeout: config.timeout }),
       );
 
+      const result = data.resultObject ?? data;
+
       const electricLog = this.electricRepo.create({
         dormId: dorm.id,
         meterType,
-        leftMoney: data.leftMoney ?? data.money ?? 0,
-        leftEle: data.leftEle ?? data.ele ?? data.electric ?? 0,
-        queryTime: data.queryTime ? new Date(data.queryTime) : new Date(),
+        leftMoney: parseFloat(result.leftMoney) || 0,
+        leftEle: parseFloat(result.leftEle) || 0,
+        queryTime: result.monTime ? new Date(result.monTime) : new Date(),
       });
 
       return this.electricRepo.save(electricLog);
